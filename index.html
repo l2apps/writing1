@@ -28,6 +28,8 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px so
 .tab{white-space:nowrap;border-color:transparent;padding:6px 12px;color:var(--mute)}
 .tab[aria-pressed=true]{background:var(--fg);color:#fff;border-color:var(--fg)}
 .tools{display:flex;gap:6px;align-items:center}
+.usage{font-size:13px;color:var(--mute);padding:0 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.usage.full{color:var(--fg);font-weight:600;text-decoration:underline}
 .tools button{padding:6px 10px;font-size:13px}
 main{max-width:680px;margin:0 auto;padding:48px 20px calc(48px + env(safe-area-inset-bottom))}
 .meta{display:flex;justify-content:space-between;align-items:center;color:var(--mute);font-size:13px;min-height:34px}
@@ -100,6 +102,7 @@ kbd{font:12px var(--ui);border:1px solid var(--line);border-radius:4px;padding:0
  <span class="logo">TASK1.LAB</span>
  <nav class="tabs" id="tabs" aria-label="Dạng bài"></nav>
  <div class="tools">
+  <span id="usage" class="usage" title="Lượt chấm hôm nay">0/150</span>
   <button id="btnKey" type="button">API Key</button>
   <button id="btnSaved" type="button">★ Đã lưu (<span id="cnt">0</span>)</button>
  </div>
@@ -129,6 +132,8 @@ const TYPES={trend:'Xu hướng',comparison:'So sánh',map:'Bản đồ',process
 const TYPE_EN={trend:'Trend',comparison:'Comparison',map:'Map',process:'Process'};
 
 
+const MODEL='openai/gpt-oss-120b';
+const DAILY_LIMIT=150; // ước lượng an toàn; đổi nếu gói của bạn khác
 const SYSTEM=`You are a strict, concise IELTS Writing Task 1 examiner.
 Your job is to evaluate a single English sentence written by a Vietnamese learner based on a given Task 1 prompt (written in Vietnamese).
 
@@ -241,7 +246,7 @@ async function grade(){
   const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
    method:'POST',signal:ctrl.signal,
    headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-   body:JSON.stringify({model:'openai/gpt-oss-120b',temperature:0.2,response_format:{type:'json_object'},
+   body:JSON.stringify({model:MODEL,temperature:0.2,reasoning_effort:'low',max_completion_tokens:1500,response_format:{type:'json_object'},
     messages:[{role:'system',content:SYSTEM},
      {role:'user',content:`Task type: ${TYPE_EN[p.type]}\nVietnamese prompt: """${p.prompt}"""\nLearner sentence:\n<sentence>${s}</sentence>`}]})
   });
@@ -249,6 +254,7 @@ async function grade(){
   if(res.status===429)throw new Error('Quá giới hạn yêu cầu. Chờ một lúc rồi thử lại.');
   if(!res.ok)throw new Error('Groq trả về lỗi '+res.status+'. Thử lại sau.');
   const data=await res.json();
+  addUsage(data.usage&&data.usage.total_tokens);
   let j;
   try{j=JSON.parse(data.choices[0].message.content)}catch(e){throw new Error('Phản hồi không hợp lệ. Bấm chấm điểm lại.')}
   const cr=j.criteria||{};
@@ -261,6 +267,17 @@ async function grade(){
   state.error=e.name==='AbortError'?'Hết thời gian chờ. Thử lại.':(e instanceof TypeError?'Không kết nối được. Kiểm tra mạng.':e.message);
  }finally{clearTimeout(to);state.busy=false;render();}
 }
+
+/* Usage */
+const today=()=>new Date().toLocaleDateString('en-CA');
+let usage=load('t1.usage',{d:today(),n:0,t:0});
+function renderUsage(){
+ if(usage.d!==today()){usage={d:today(),n:0,t:0};store('t1.usage',usage);}
+ const u=$('#usage');u.textContent=usage.n+'/'+DAILY_LIMIT;
+ u.classList.toggle('full',usage.n>=DAILY_LIMIT);
+ u.title='Lượt chấm hôm nay: '+usage.n+'/'+DAILY_LIMIT+' · khoảng '+usage.t.toLocaleString('vi-VN')+' token';
+}
+function addUsage(tokens){renderUsage();usage.n++;usage.t+=(+tokens||0);store('t1.usage',usage);renderUsage();}
 
 /* Saved */
 function findSaved(pid,sentence){return saved.findIndex(x=>x.pid===pid&&x.type===state.cur.type&&x.sentence===sentence)}
@@ -294,7 +311,7 @@ document.addEventListener('keydown',e=>{
  else if(e.key==='Enter'&&state.view==='result'&&!$('#drawer').classList.contains('open')&&!$('#modal').classList.contains('open')&&document.activeElement.tagName!=='BUTTON'){next();}
 });
 
-renderTabs();updateCount();next();
+renderTabs();updateCount();renderUsage();next();
 </script>
 </body>
 </html>
